@@ -1,3 +1,21 @@
+This project is built from another project "Realtime Multiplayer In HTML5".  It's information can be found at the bottom of this readme.
+
+Multiplayer Pong In HTML5
+=========================
+
+Designed for a 4th year Internet Computing course, this project is still a WIP.  The goal of the project is to create a
+multiplayer pong game that can be played over the internet.  To make it playable over the internet each client must
+implement movement prediction to reduce input lag.  We are currently working on implementing movement prediction with
+the ball.
+
+To run this project:
+* Get node.js
+* run `npm install` inside the cloned folder
+* run `node app.js` inside the cloned folder
+* Visit http://127.0.0.1:4004/?debug
+
+
+
 Realtime Multiplayer In HTML5
 =============================
 
