@@ -98,14 +98,13 @@
     }; //game_server.onInput
 
         //Define some required functions
-    game_server.createGame = function(player, ball) {
+    game_server.createGame = function(player) {
 
             //Create a new game instance
         var thegame = {
                 id : UUID(),                //generate a new id for the game
                 player_host:player,         //so we know who initiated the game
                 player_client:null,         //nobody else joined yet, since its new
-				ball: ball,
                 player_count:1              //for simple checking of state
             };
 
