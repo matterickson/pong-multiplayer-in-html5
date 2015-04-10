@@ -52,7 +52,15 @@ if('undefined' != typeof(global)) frame_time = 45; //on server we run at 45ms, 2
 /* The game_core class */
 
     var game_core = function(game_instance){
-
+		this.winScore = 3;
+		
+		this.gameOverDataSent = false;
+		
+		this.lastSideScored = Math.random() < 0.5 ? 0 : Math.PI;
+		
+		this.timer = null; //set up later
+		this.physTimer = null //another timer set up later
+		this.pingTimer = null //another timer set up later
             //Store the instance, if any
         this.instance = game_instance;
             //Store a flag if we are the server
@@ -73,7 +81,7 @@ if('undefined' != typeof(global)) frame_time = 45; //on server we run at 45ms, 2
                 other : new game_player(this,this.instance.player_client)
             };
 
-           this.players.self.pos = {x:0,y:240};
+           this.players.self.pos = {x:8,y:240};
 
         } else {
 
@@ -102,16 +110,16 @@ if('undefined' != typeof(global)) frame_time = 45; //on server we run at 45ms, 2
             this.ghosts.server_pos_self.state = 'server_pos';
             this.ghosts.server_pos_other.state = 'server_pos';
 
-            this.ghosts.server_pos_self.pos = { x:0, y:240 };
+            this.ghosts.server_pos_self.pos = { x:8, y:240 };
             this.ghosts.pos_other.pos = { x:712, y:240 };
             this.ghosts.server_pos_other.pos = { x:712, y:240 };
         }
 
             //The speed at which the clients move.
-        this.playerspeed = 200;
+        this.playerspeed = 450;
 
 		this.ball = new game_ball(this);
-		this.ballspeed = 200;
+		this.ballspeed = 0;
 		
             //Set up some physics integration values
         this._pdt = 0.0001;                 //The physics update delta time
@@ -120,12 +128,13 @@ if('undefined' != typeof(global)) frame_time = 45; //on server we run at 45ms, 2
         this.local_time = 0.016;            //The local timer
         this._dt = new Date().getTime();    //The local timer delta
         this._dte = new Date().getTime();   //The local timer last frame time
-
-            //Start a physics loop, this is separate to the rendering
-            //as this happens at a fixed frequency
+		
+		//Start a physics loop, this is separate to the rendering
+        //as this happens at a fixed frequency
         this.create_physics_simulation();
+		//moved this to update
 
-            //Start a fast paced timer for measuring time easier
+        //Start a fast paced timer for measuring time easier
         this.create_timer();
 
             //Client specific initialisation
@@ -210,16 +219,18 @@ game_core.prototype.v_lerp = function(v,tv,t) { return { x: this.lerp(v.x, tv.x,
         this.game = game_instance;
 
             //Set up initial values for our state information
-        this.pos = { x:0, y:0 };
+        this.pos = { x:8, y:0 };
         this.size = { x:16, y:120, hx:8, hy:60 };
         this.state = 'not-connected';
         this.color = 'rgba(255,255,255,0.1)';
         this.info_color = 'rgba(255,255,255,0.1)';
         this.id = '';
+		
+		this.score = 0;
 
             //These are used in moving us around later
-        this.old_state = {pos:{x:0,y:0}};
-        this.cur_state = {pos:{x:0,y:0}};
+        this.old_state = {pos:{x:8,y:0}};
+        this.cur_state = {pos:{x:8,y:0}};
         this.state_time = new Date().getTime();
 
             //Our local history of inputs
@@ -237,7 +248,7 @@ game_core.prototype.v_lerp = function(v,tv,t) { return { x: this.lerp(v.x, tv.x,
             //the server already knows who they are. If the server starts a game
             //with only a host, the other player is set up in the 'else' below
         if(player_instance) {
-            this.pos = { x:0, y:240 };
+            this.pos = { x:8, y:240 };
         } else {
             this.pos = { x:712, y:240 };
         }
@@ -256,8 +267,10 @@ game_core.prototype.v_lerp = function(v,tv,t) { return { x: this.lerp(v.x, tv.x,
         game.ctx.fillStyle = this.info_color;
 		if(this.pos.x == 712){
 			game.ctx.fillText(this.state, 600, 12);
+			game.ctx.fillText(this.score, 600, 24);
 		}else{
 			game.ctx.fillText(this.state, 10, 12);
+			game.ctx.fillText(this.score, 10, 24);
 		}
     
     }; //game_player.draw
@@ -270,7 +283,8 @@ game_core.prototype.v_lerp = function(v,tv,t) { return { x: this.lerp(v.x, tv.x,
         this.pos = { x:360, y:240 };
         this.size = { x:16, y:16, hx:8, hy:8 };
         this.state = 'ball';
-		this.angle = Math.PI*3/4;
+		this.angle = (Math.random() * Math.PI/2)-Math.PI/4;//Math.PI*3/4;
+		//this.angle = Math.random()<.5?-angle:angle;
         this.color = '#cc2121';
         this.info_color = 'rgba(255,255,255,0.1)';
         this.id = '';
@@ -308,7 +322,7 @@ game_core.prototype.v_lerp = function(v,tv,t) { return { x: this.lerp(v.x, tv.x,
         //game.ctx.fillText(this.state, this.pos.x, this.pos.y + 4);
     
     }; //game_ball.draw
-
+	
 /*
 
  Common functions
@@ -336,7 +350,8 @@ game_core.prototype.update = function(t) {
     }
 
         //schedule the next update
-    this.updateid = window.requestAnimationFrame( this.update.bind(this), this.viewport );
+	if(!this.gameOverDataSent)
+		this.updateid = window.requestAnimationFrame( this.update.bind(this), this.viewport );
 
 }; //game_core.update
 
@@ -344,18 +359,7 @@ game_core.prototype.update = function(t) {
     Shared between server and client.
     In this example, `item` is always of type game_player.
 */
-game_core.prototype.check_collision = function( item ) {
-
-        //Left wall.
-    if(item.pos.x <= item.pos_limits.x_min) {
-        item.pos.x = item.pos_limits.x_min;
-    }
-
-        //Right wall
-    if(item.pos.x >= item.pos_limits.x_max ) {
-        item.pos.x = item.pos_limits.x_max;
-    }
-    
+game_core.prototype.check_collision = function( item ) {   
         //Roof wall.
     if(item.pos.y <= item.pos_limits.y_min) {
         item.pos.y = item.pos_limits.y_min;
@@ -372,81 +376,100 @@ game_core.prototype.check_collision = function( item ) {
     
 }; //game_core.check_collision
 
-game_core.prototype.check_ball_coll = function( ball, player ) {
+game_core.prototype.check_ball_walls = function( ball ) {
 	ball.angle = ball.angle % (2*Math.PI);
 	if(ball.angle < 0){
 		ball.angle = ball.angle + 2*Math.PI;
 	}
-	//Left wall
-	if(ball.pos.x < ball.pos_limits.x_min) {
-        ball.pos.x = ball.pos_limits.x_min;
-		if(ball.angle > Math.PI){
-			ball.angle = ball.angle + Math.PI/2;
-		}else{
-			ball.angle = ball.angle - Math.PI/2;
-		}
-    }
-
-    //Right wall
-    if(ball.pos.x > ball.pos_limits.x_max ) {
-        ball.pos.x = ball.pos_limits.x_max;
-		if(ball.angle > Math.PI){
-			ball.angle = ball.angle - Math.PI/2;
-		}else{
-			ball.angle = ball.angle + Math.PI/2;
-		}
-    }
     
     //Roof wall.
     if(ball.pos.y < ball.pos_limits.y_min) {
         ball.pos.y = ball.pos_limits.y_min;
-		if((ball.angle > (Math.PI/2)) && (ball.angle < (3*Math.PI/2))){
-			ball.angle = ball.angle - Math.PI/2;
-		}else{
-			ball.angle = ball.angle + Math.PI/2;
-		}
+		ball.angle = -ball.angle;
     }
 
     //Floor wall
     if(ball.pos.y > ball.pos_limits.y_max ) {
         ball.pos.y = ball.pos_limits.y_max;
-		if((ball.angle > (Math.PI/2)) && (ball.angle < (3*Math.PI/2))){
-			ball.angle = ball.angle + Math.PI/2;
-		}else{
-			ball.angle = ball.angle - Math.PI/2;
-		}
+		ball.angle = -ball.angle;
     }
 	
+	var scored = false;
+	
+	//Left wall
+	if(ball.pos.x < ball.pos_limits.x_min) {
+        ball.pos.x = ball.pos_limits.x_min;
+		ball.angle = -Math.PI - ball.angle;
+		scored = true;
+		if(this.players.self.pos.x == 712){
+			this.players.self.score += 1;
+		}else{
+			this.players.other.score += 1;
+		}
+		console.log("Goal on left side: " + this.players.self.score + ":" + this.players.other.score);
+		this.lastSideScored = Math.PI;
+		this.reset_ball();
+    }
+
+    //Right wall
+    if(ball.pos.x > ball.pos_limits.x_max ) {
+        ball.pos.x = ball.pos_limits.x_max;
+		ball.angle = -Math.PI - ball.angle;
+		scored = true;
+		if(this.players.self.pos.x == 712){
+			this.players.other.score += 1;
+		}else{
+			this.players.self.score += 1;
+		}
+		this.lastSideScored = 0;
+		this.reset_ball();
+		console.log("Goal on right side: " + this.players.self.score + ":" + this.players.other.score);
+    }
+	
+	return scored;
+}
+
+game_core.prototype.reset_ball = function(){
+	this.ball.pos = { x:360, y:240 };
+	this.ball.angle = this.lastSideScored + (Math.random() * Math.PI/2)-Math.PI/4;    
+	this.ballspeed = 200;
+}
+
+game_core.prototype.check_ball_coll = function( ball, player ) {
+	ball.angle = ball.angle % (2*Math.PI);
+	if(ball.angle < 0){
+		ball.angle = ball.angle + 2*Math.PI;
+	}
+    
+	var hit = false;
 	//check if it hit paddle
 	if(ball.pos.x > player.pos.x - player.size.hx && ball.pos.x < player.pos.x + player.size.hx){
 		if(ball.pos.y > player.pos.y - player.size.hy && ball.pos.y < player.pos.y + player.size.hy){
-			this.ballspeed = this.ballspeed * 1.1;
+			if(this.ballspeed < 600){
+				this.ballspeed = this.ballspeed * 1.1; //gradually speed up the ball
+			}
+			
+			hit = true;
 
 			//if its the right paddle, move the ball the left side of it
 			if(player.pos.x == 712){
 				ball.pos.x = player.pos.x-player.size.hx-ball.size.hx;
-				if(ball.angle > Math.PI){
-					ball.angle = ball.angle - Math.PI/2;
-				}else{
-					ball.angle = ball.angle + Math.PI/2;
-				}
+				ball.angle = 5*Math.PI/4 - (Math.PI/2 * (ball.pos.y - player.pos.y+player.size.hy) / player.size.y);
 				console.log("Hit paddle 2");
 			}else{
 				//if its the left paddle, move the ball to the right side of it
 				ball.pos.x = player.pos.x+player.size.hx+ball.size.hx;
-				if(ball.angle > Math.PI){
-					ball.angle = ball.angle + Math.PI/2;
-				}else{
-					ball.angle = ball.angle - Math.PI/2;
-				}
+				ball.angle = -Math.PI/4 + (Math.PI/2 * (ball.pos.y - player.pos.y+player.size.hy) / player.size.y);
 				console.log("Hit paddle 1");
 			}
 		}
 	}
 	
-	        //Fixed point helps be more deterministic
+	//Fixed point helps be more deterministic
     ball.pos.x = ball.pos.x.fixed(4);
     ball.pos.y = ball.pos.y.fixed(4);
+	
+	return hit;
 }
 
 game_core.prototype.process_input = function( player ) {
@@ -510,8 +533,8 @@ game_core.prototype.ball_physics_movement_vector_from_angle = function(angle) {
 
         //Must be fixed step, at physics sync speed.
     return {
-        x : (this.ballspeed * Math.cos(angle) * 0.015).fixed(3),//(x * (this.ballspeed * 0.015)).fixed(3),
-        y : (this.ballspeed * Math.sin(angle) * 0.015).fixed(3)//(y * (this.ballspeed * 0.015)).fixed(3)
+        x : (this.ballspeed * Math.cos(angle) * 0.015).fixed(3),
+        y : (this.ballspeed * Math.sin(angle) * 0.015).fixed(3)
     };
 
 }; //game_core.ball_physics_movement_vector_from_direction
@@ -557,8 +580,11 @@ game_core.prototype.server_update_physics = function() {
     this.check_collision( this.players.self );
     this.check_collision( this.players.other );
 	
+	//check both players their collision
 	this.check_ball_coll( this.ball, this.players.self );
 	this.check_ball_coll( this.ball, this.players.other );
+
+	this.check_ball_walls( this.ball );
 
     this.players.self.inputs = []; //we have cleared the input buffer, so remove this
     this.players.other.inputs = []; //we have cleared the input buffer, so remove this
@@ -581,7 +607,9 @@ game_core.prototype.server_update = function(){
         t   : this.server_time,                     // our current local time on the server
 		bp  : this.ball.pos,
 		ba  : this.ball.angle,
-		bs  : this.ballspeed
+		bs  : this.ballspeed,
+		hs  : this.players.self.score,
+		cs  : this.players.other.score
     };
 
         //Send the snapshot to the 'host' player
@@ -676,6 +704,13 @@ game_core.prototype.client_handle_input = function(){
 
 }; //game_core.client_handle_input
 
+game_core.prototype.stop_game = function(){
+	clearInterval(this.timer);
+	clearInterval(this.physTimer);
+	clearInterval(this.pingTimer);
+	this.ballspeed = 0;
+}
+
 game_core.prototype.client_process_net_prediction_correction = function() {
 
         //No updates...
@@ -691,11 +726,8 @@ game_core.prototype.client_process_net_prediction_correction = function() {
         //Update the debug server position block
     this.ghosts.server_pos_self.pos = this.pos(my_server_pos);
 
-	//console.log("lsd.bp.x: "+latest_server_data.bp.x);
-	//this.ball.pos = this.pos(latest_server_data.bp);
-	
-		//here we handle our local input prediction ,
-		//by correcting it with the server and reconciling its differences
+	//here we handle our local input prediction ,
+	//by correcting it with the server and reconciling its differences
 
 	var my_last_input_on_server = this.players.self.host ? latest_server_data.his : latest_server_data.cis;
 	if(my_last_input_on_server) {
@@ -808,10 +840,40 @@ game_core.prototype.client_process_net_updates = function() {
 
         this.players.other.pos = this.v_lerp( this.players.other.pos, this.ghosts.pos_other.pos, this._pdt*this.client_smooth);
 		
-		
-		//console.log("BP: " + latest_server_data.bp);
+		//console.log("lsd: " + latest_server_data.bp);
+		this.players.self.score = this.players.self.host ? latest_server_data.hs : latest_server_data.cs;
+		this.players.other.score = this.players.self.host ? latest_server_data.cs : latest_server_data.hs;
+		//v_sub(latest_server_data.bp);
 		this.ball.pos = this.pos(latest_server_data.bp);
-
+		this.ball.angle = latest_server_data.ba;
+		this.ballspeed = latest_server_data.bs;
+		
+		if(!this.gameOverDataSent){
+			if(this.players.self.score == this.winScore){
+				this.gameOverDataSent = true;
+				//Draw a status update
+				game.ctx.fillStyle = '#3498DB';
+				game.ctx.fillText("YOU WIN!", 335, 100);
+				this.socket.send('e');
+				this.stop_update();
+				
+				//used to update database for games won
+				/*setTimeout(function(){
+					window.location.replace("http://54.187.106.210/game_won.php");
+				}.bind(this), 3000);*/
+			} else if(this.players.other.score == this.winScore){
+				this.gameOverDataSent = true;
+				game.ctx.fillStyle = '#3498DB';
+				game.ctx.fillText("YOU LOSE!!!", 330, 100);
+				this.socket.send('e');
+				this.stop_update();
+				
+				//used to update database for lost
+				/*setTimeout(function(){
+					window.location.replace("http://54.187.106.210/game_lost.php");
+				}.bind(this), 3000);*/
+			}
+		}
     } //if target && previous
 
 }; //game_core.client_process_net_updates
@@ -875,11 +937,27 @@ game_core.prototype.client_update_local_position = function(){
 	this.check_collision( this.players.self );
 	
 	//some ball stuff addedthis
-	var ball_old_state = this.ball.old_state.pos;
-	var ball_curr_state = this.ball.cur_state.pos;
-	this.ball.pos = ball_curr_state;
+	this.ball.old_state.pos = this.pos( this.ball.pos );
+	var ball_new_dir = this.ball_physics_movement_vector_from_angle(this.ball.angle);
+	this.ball.cur_state.pos = this.v_add( this.ball.old_state.pos, ball_new_dir );
+	this.ball.pos = this.ball.cur_state.pos;
+
+	//client checks their collision
+	var scored = this.check_ball_walls( this.ball );
+	if(scored){
+		this.reset_ball();
+	}
 	
-	this.check_ball_coll(this.ball, this.players.self);
+	//this.check_ball_coll(this.ball, this.players.other);
+	var hit = this.check_ball_coll(this.ball, this.players.self);
+	if(hit){
+		console.log("Sent ball shit to server");			
+		var rounded_x = Math.round(this.ball.pos.x);
+		var rounded_y = Math.round(this.ball.pos.y);
+		var angle_d = Math.round(180*this.ball.angle/Math.PI);
+		var rounded_bs = Math.round(this.ballspeed);
+		this.socket.send('b.'+rounded_x+';'+rounded_y+';'+angle_d+';'+rounded_bs);
+	}
 }; //game_core.prototype.client_update_local_position
 
 game_core.prototype.client_update_physics = function() {
@@ -944,7 +1022,7 @@ game_core.prototype.client_update = function() {
 }; //game_core.update_client
 
 game_core.prototype.create_timer = function(){
-    setInterval(function(){
+    this.timer = setInterval(function(){
         this._dt = new Date().getTime() - this._dte;
         this._dte = new Date().getTime();
         this.local_time += this._dt/1000.0;
@@ -953,7 +1031,7 @@ game_core.prototype.create_timer = function(){
 
 game_core.prototype.create_physics_simulation = function() {
 
-    setInterval(function(){
+    this.physTimer = setInterval(function(){
         this._pdt = (new Date().getTime() - this._pdte)/1000.0;
         this._pdte = new Date().getTime();
         this.update_physics();
@@ -966,7 +1044,7 @@ game_core.prototype.client_create_ping_timer = function() {
         //Set a ping timer to 1 second, to maintain the ping/latency between
         //client and server and calculated roughly how our connection is doing
 
-    setInterval(function(){
+    this.pingTimer = setInterval(function(){
 
         this.last_ping_time = new Date().getTime();
         this.socket.send('p.' + (this.last_ping_time) );
@@ -1056,7 +1134,7 @@ game_core.prototype.client_reset_positions = function() {
     var player_client = this.players.self.host ?  this.players.other : this.players.self;
 
         //Host always spawns at the top left.
-    player_host.pos = { x:0,y:240 };
+    player_host.pos = { x:8,y:240 };
     player_client.pos = { x:712, y:240 };
 	
 	this.ball.pos = { x:360, y:240 };
@@ -1093,9 +1171,9 @@ game_core.prototype.client_onreadygame = function(data) {
     player_client.state = 'local_pos(joined)';
 
     this.players.self.state = 'YOU ' + this.players.self.state;
-
-        //Make sure colors are synced up
-     this.socket.send('c.' + this.players.self.color);
+	
+    //Make sure colors are synced up
+    this.socket.send('c.' + this.players.self.color);
 
 }; //client_onreadygame
 
@@ -1187,6 +1265,20 @@ game_core.prototype.client_onnetmessage = function(data) {
 
                 case 'c' : //other player changed colors
                     this.client_on_otherclientcolorchange(commanddata); break;
+					
+				case 'b' : //ball update from paddle hit
+					//BP.X, BP.Y, BA, BS
+					//received ball update: 696;422;135;220"
+					console.log("received ball update: " + commanddata);
+					var ball_data = commanddata.split(';');
+					this.ball.pos.x = parseFloat(ball_data[0]);
+					this.ball.pos.y = parseFloat(ball_data[1]);
+					this.ball.angle = parseFloat(Math.PI*ball_data[2]/180);
+					this.ballspeed = parseFloat(ball_data[3]);
+					console.log("this.ball.pos.x: "+this.ball.pos.x);
+					console.log("this.ball.pos.y: "+this.ball.pos.y);
+					console.log("this.ball.angle: "+this.ball.angle);
+					console.log("this.ballspeed: "+this.ballspeed);
 
             } //subcommand
 

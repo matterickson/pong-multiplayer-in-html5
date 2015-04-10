@@ -67,6 +67,8 @@
             (client.game.player_host.userid == client.userid) ?
                 client.game.player_client : client.game.player_host;
 
+		//console.log(message);
+				
         if(message_type == 'i') {
                 //Input handler will forward this
             this.onInput(client, message_parts);
@@ -75,9 +77,26 @@
         } else if(message_type == 'c') {    //Client changed their color!
             if(other_client)
                 other_client.send('s.c.' + message_parts[1]);
-        } else if(message_type == 'l') {    //A client is asking for lag simulation
-            this.fake_latency = parseFloat(message_parts[1]);
-        }
+        } else if(message_type == 'b') {
+			console.log("received a b, sending: "+'s.b.'+message_parts[1]);
+			if(other_client)
+				other_client.send('s.b.' + message_parts[1]);
+		} else if(message_type == 'e') {
+			//game over
+			client.send('s.e');
+			if(other_client)
+				other_client.send('s.e');
+
+			if(this.games[client.game.id]){
+				this.games[client.game.id].gamecore.stop_game();
+            
+				delete this.games[client.game.id];
+				this.game_count--;
+			}
+
+            this.log('game removed. there are now ' + this.game_count + ' games' );
+
+		}
 
     }; //game_server.onMessage
 
@@ -148,16 +167,17 @@
                 //if the game has two players, the one is leaving
             if(thegame.player_count > 1) {
 
+				//We commented some of this section out.  We don't want players to automatically join a new game.
                     //send the players the message the game is ending
                 if(userid == thegame.player_host.userid) {
 
                         //the host left, oh snap. Lets try join another game
-                    if(thegame.player_client) {
+                    //if(thegame.player_client) {
                             //tell them the game is over
                         thegame.player_client.send('s.e');
                             //now look for/create a new game.
-                        this.findGame(thegame.player_client);
-                    }
+                    //    this.findGame(thegame.player_client);
+                    //}
                     
                 } else {
                         //the other player left, we were hosting
@@ -167,12 +187,15 @@
                             //i am no longer hosting, this game is going down
                         thegame.player_host.hosting = false;
                             //now look for/create a new game.
-                        this.findGame(thegame.player_host);
+                        //this.findGame(thegame.player_host);
                     }
                 }
             }
-
-            delete this.games[gameid];
+			//addedthis
+			//need to stop timers here
+			this.games[gameid].gamecore.stop_game();
+            
+			delete this.games[gameid];
             this.game_count--;
 
             this.log('game removed. there are now ' + this.game_count + ' games' );
@@ -196,6 +219,8 @@
             //clients will reset their positions in this case.
         game.player_client.send('s.r.'+ String(game.gamecore.local_time).replace('.','-'));
         game.player_host.send('s.r.'+ String(game.gamecore.local_time).replace('.','-'));
+ 
+		game.gamecore.ballspeed = 200;
  
             //set this flag, so that the update loop can run it.
         game.active = true;
